@@ -1,66 +1,129 @@
-![logo_ironhack_blue 7](https://user-images.githubusercontent.com/23629340/40541063-a07a0a8a-601a-11e8-91b5-2f13e4e6b441.png)
+# Order Assistant — a Multi-Tool Agent
 
-# Assessment | Ship a Multi-Tool Agent
+A small agent that takes a real, multi-step goal, decides for itself which tools to
+call, and returns a structured JSON result. It runs on Gemini through `google-genai`
+with a hand-controlled tool-calling loop so the step limit, safety check and logging
+are all visible.
 
-## Overview
+## Scenario and tools
 
-This is your chance to put the second half of the unit together. You'll build a small but genuinely useful **agent** that uses **three tools** to accomplish a real, multi-step goal — deciding its own steps, the way an agent should — and returns a **structured result**. Then you'll show you understand the grown-up parts: one reliability safeguard and one safety mitigation.
+I went with the **order assistant**. The goal is the kind of thing a single tool can't
+answer:
 
-No RAG is required here. This is about **agents and tool use**: an agent that reasons, calls tools, and acts.
+> "I'm ali. I want two more of my last order. What's the total cost, and is it still
+> under warranty?"
 
-## What You'll Build
+To get there the agent has to look something up, do some maths, and check a date — three
+different jobs, so three tools:
 
-An agent (use **Google ADK**, or a hand-rolled loop if you prefer — your choice) that:
+- **`lookup_order(customer)`** — reads `orders.json` and returns the customer's most
+  recent order (product, unit price, purchase date). The agent needs this before it can
+  do anything else.
+- **`calculate(expression)`** — a sandboxed arithmetic evaluator. The agent is told to do
+  *all* maths here rather than in its head, which is both more reliable and the place I
+  put the safety mitigation.
+- **`check_warranty(product, purchase_date)`** — works out the expiry date from a
+  per-product warranty period and tells the agent whether it's still covered.
 
-- has **three tools** it can call,
-- is given a **multi-step goal** it can't satisfy with a single tool call,
-- **decides for itself** which tools to use and in what order,
-- returns a **structured final result** (e.g. a small JSON object or a clearly formatted report), and
-- is **bounded** (a step limit) and **guarded** (one safety mitigation you implement and explain).
+The order of calls isn't hardcoded. The system prompt states the goal and the rules; the
+model chooses what to call and when, then stops and emits the final JSON itself.
 
-### Pick a scenario (or invent your own)
+## Structured output
 
-Choose one that interests you — these are starting points, not requirements:
+The agent's final answer is a single JSON object, ready for another program to consume:
 
-- **Trip concierge** — tools: `search_flights`, `search_hotels`, `calculate`. Goal: "Plan a 3-day trip to Porto under €600 and give me the total." Output: a structured itinerary with a cost breakdown.
-- **Order assistant** — tools: `lookup_order`, `check_warranty`, `calculate`. Goal: "I want two more of my last order — total cost, and is it still under warranty?" Output: a structured summary.
-- **Study planner** — tools: `list_topics`, `estimate_effort`, `calculate`. Goal: "Build me a study plan for the exam with total hours." Output: a structured plan.
+```json
+{
+  "order_id": "A-1042",
+  "product": "Nimbus Wireless Headphones",
+  "unit_price": 149.0,
+  "requested_quantity": 2,
+  "total_cost": 298.0,
+  "currency": "EUR",
+  "warranty": { "covered": true, "expires_on": "2028-04-18", "days_remaining": 659 },
+  "summary": "Two more Nimbus Wireless Headphones cost 298.0 EUR. Warranty is still active (expires 2028-04-18).",
+  "status": "completed",
+  "steps_used": 3
+}
+```
 
-Your tools can use small local data files (like the `orders.json` you've seen) or return mock data — the focus is the **agent's behaviour**, not a real backend.
+## Reliability note
 
-## Requirements
+The loop in `agent.py` runs at most `MAX_STEPS` (6) turns. Each turn the model either calls
+tools or returns the final answer; if it never settles, the loop exits with
+`{"status": "stopped", "reason": "hit the 6-step limit"}` instead of looping forever. On
+top of that, every tool returns a plain `{"error": ...}` object rather than raising —
+unknown customer, bad arguments, an unparseable date — so a single failed call becomes
+data the model can react to, and the run stays alive. Three honest tool calls solve this
+goal, so the cap leaves comfortable headroom while still being a hard ceiling.
 
-Your submission must include:
+## Safety note
 
-1. **A working agent** with three tools that solves the multi-step goal by its own tool choices (not a script you hardwired).
-2. **A structured output** — the final answer in a parseable, well-shaped form, not just free text.
-3. **A step limit** so the agent cannot loop forever, with a sensible cap.
-4. **One safety mitigation** that you implement and can justify — for example, treating tool results as untrusted data, validating a tool's arguments before acting, or requiring confirmation before a "destructive" tool runs.
-5. **A README** in your repo covering:
-   - which scenario and three tools you chose, and why,
-   - one **reliability** note (how your step limit / failure handling protects the run),
-   - one **safety** note (the mitigation you added and what attack it defends against),
-   - a captured run showing the agent's tool calls and structured result.
+The mitigation lives in `calculate`. The expression comes from the model and is therefore
+untrusted, so instead of `eval()` I parse it with `ast.parse(..., mode="eval")` and walk
+the tree allowing only numeric literals and `+ - * / ** -`. Anything else — function
+calls, attribute access, names — is rejected with an error and never executed. This
+defends against code injection through the tool argument: if the model (or a
+prompt-injection riding in the order data) emits
+`__import__("os").system("rm -rf ~")` or `open("/etc/passwd").read()`, the evaluator
+refuses it rather than running it. The system prompt reinforces this by telling the model
+to treat tool output as data, not as instructions.
 
-## Submission
+Verified:
 
-Work on a branch, commit your code and README, open a Pull Request, and paste its link into the submission box.
+```
+calculate("149.0 * 2")                          -> {"value": 298.0}
+calculate("(1+2)**3")                           -> {"value": 27.0}
+calculate('__import__("os").system("echo x")')  -> {"error": "rejected an unsafe or invalid expression"}
+calculate('open("/etc/passwd").read()')         -> {"error": "rejected an unsafe or invalid expression"}
+```
 
-**Deadline:** Sunday 28 June 2026, 23:59 local time. Late submissions are scored at 70% maximum.
+## Captured run
 
-## Grading Rubric (100 pts)
+```
+goal: I'm ali. I want two more of my last order. What's the total cost, and is it still under warranty?
 
-| Area | What we look for | Points |
-|---|---|---|
-| **Agent works** | Three tools; the multi-step goal is solved by the agent's own tool choices | 30 |
-| **Structured output** | Final result is well-shaped and parseable, not free text | 15 |
-| **Reliability** | A working step limit; graceful handling when a tool fails or the goal can't be met | 20 |
-| **Safety** | A real mitigation, correctly implemented and clearly justified | 20 |
-| **README & run** | Clear tool choices, reliability + safety notes, and a captured run | 15 |
+[step 1] lookup_order({"customer": "ali"}) -> {"id": "A-1042", "customer": "ali", "product": "Nimbus Wireless Headphones", "unit_price": 149.0, "quantity": 1, "purchase_date": "2026-04-18"}
+[step 2] calculate({"expression": "149.0 * 2"}) -> {"expression": "149.0 * 2", "value": 298.0}
+[step 3] check_warranty({"product": "Nimbus Wireless Headphones", "purchase_date": "2026-04-18"}) -> {"product": "Nimbus Wireless Headphones", "warranty_months": 24, "expires_on": "2028-04-18", "days_remaining": 659, "covered": true}
 
-## Quality Bar
+final result:
+{
+  "order_id": "A-1042",
+  "product": "Nimbus Wireless Headphones",
+  "unit_price": 149.0,
+  "requested_quantity": 2,
+  "total_cost": 298.0,
+  "currency": "EUR",
+  "warranty": { "covered": true, "expires_on": "2028-04-18", "days_remaining": 659 },
+  "summary": "Two more Nimbus Wireless Headphones cost 298.0 EUR. Warranty is still active (expires 2028-04-18).",
+  "status": "completed",
+  "steps_used": 3
+}
+```
 
-- The agent **decides its own steps** — reviewers should see tool calls it chose, not a fixed script
-- The output is genuinely **structured** and could be consumed by another program
-- Both the **step limit** and the **safety mitigation** actually run, and you can explain what each protects against
-- No API key is committed to the repo
+The transcript above was produced by `offline_demo.py`, which feeds the **same** loop,
+tools, step limit and JSON parsing a scripted set of model decisions so the run can be
+reproduced without an API key. The real agent (`agent.py`) makes the identical calls
+driven by Gemini.
+
+## Running it
+
+```bash
+pip install -r requirements.txt
+export GEMINI_API_KEY=your-key      # or GOOGLE_API_KEY
+python agent.py                     # uses the default goal, or pass your own as args
+```
+
+No-key reproduction of the captured run:
+
+```bash
+python offline_demo.py
+```
+
+## Files
+
+- `agent.py` — the Gemini loop: step limit, tool dispatch, structured final answer.
+- `tools.py` — the three tools and their function declarations.
+- `orders.json` — mock order data.
+- `offline_demo.py` — drives the loop with a scripted model for a key-free run.

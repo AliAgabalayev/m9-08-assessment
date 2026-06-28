@@ -1,0 +1,34 @@
+[
+  {
+    "id": "A-1001",
+    "customer": "ali",
+    "product": "Aerolite Running Shoes",
+    "unit_price": 89.9,
+    "quantity": 1,
+    "purchase_date": "2025-11-02"
+  },
+  {
+    "id": "A-1023",
+    "customer": "ali",
+    "product": "Cobalt Smart Watch",
+    "unit_price": 199.0,
+    "quantity": 1,
+    "purchase_date": "2026-01-14"
+  },
+  {
+    "id": "A-1042",
+    "customer": "ali",
+    "product": "Nimbus Wireless Headphones",
+    "unit_price": 149.0,
+    "quantity": 1,
+    "purchase_date": "2026-04-18"
+  },
+  {
+    "id": "B-2007",
+    "customer": "marta",
+    "product": "Cobalt Smart Watch",
+    "unit_price": 199.0,
+    "quantity": 2,
+    "purchase_date": "2024-02-09"
+  }
+]
